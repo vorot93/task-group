@@ -1,5 +1,5 @@
+use crossbeam::queue::SegQueue;
 use futures::future::abortable;
-use parking_lot::Mutex;
 use std::{
     future::Future,
     pin::Pin,
@@ -26,7 +26,7 @@ where
 }
 
 #[derive(Default, Debug)]
-pub struct TaskGroup(Mutex<Vec<futures::future::AbortHandle>>);
+pub struct TaskGroup(SegQueue<futures::future::AbortHandle>);
 
 impl TaskGroup {
     pub fn spawn<Fut, T>(&self, future: Fut) -> TaskHandle<T>
@@ -34,9 +34,8 @@ impl TaskGroup {
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let mut group = self.0.lock();
         let (t, handle) = abortable(future);
-        group.push(handle);
+        self.0.push(handle);
         let spawned_handle = tokio::spawn(t);
         TaskHandle(Box::pin(async move {
             Ok(spawned_handle
@@ -49,7 +48,7 @@ impl TaskGroup {
 
 impl Drop for TaskGroup {
     fn drop(&mut self) {
-        for handle in &*self.0.lock() {
+        while let Ok(handle) = self.0.pop() {
             handle.abort();
         }
     }
