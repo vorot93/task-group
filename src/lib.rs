@@ -11,10 +11,13 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub enum Shutdown {
+    /// Runtime shutdown.
     Runtime,
+    /// Task group was dropped.
     TaskGroup,
 }
 
+/// This can be awaited on to get task output.
 pub struct TaskHandle<T>(Pin<Box<dyn Future<Output = Result<T, Shutdown>> + Send + 'static>>);
 
 impl<T> Future for TaskHandle<T>
@@ -58,10 +61,12 @@ impl Drop for Inner {
     }
 }
 
+/// This is a holding structure that "owns" tasks. That is, when this struct is dropped, tasks are cancelled and eventually dropped from the Tokio runtime.
 #[derive(Default, Debug)]
 pub struct TaskGroup(Arc<Inner>);
 
 impl TaskGroup {
+    /// Spawn task on this task group.
     pub fn spawn<Fut, T>(&self, future: Fut) -> TaskHandle<T>
     where
         Fut: Future<Output = T> + Send + 'static,
