@@ -91,4 +91,14 @@ impl TaskGroup {
                 .map_err(|_| Shutdown::TaskGroup)?)
         }))
     }
+
+    /// Returns the number of tasks that are currently active in this task group.
+    pub fn len(&self) -> usize {
+        self.0.tasks.lock().len()
+    }
+
+    /// Returns `true` if no tasks are active in this task group.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
