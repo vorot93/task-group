@@ -1,10 +1,13 @@
-use crossbeam::queue::SegQueue;
-use futures::future::abortable;
+use futures::future::{abortable, AbortHandle};
+use parking_lot::Mutex;
 use std::{
+    collections::{hash_map::Entry, HashMap},
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
+use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub enum Shutdown {
@@ -26,7 +29,37 @@ where
 }
 
 #[derive(Default, Debug)]
-pub struct TaskGroup(SegQueue<futures::future::AbortHandle>);
+struct Inner {
+    tasks: Mutex<HashMap<Uuid, AbortHandle>>,
+}
+
+impl Inner {
+    fn insert(&self, item: AbortHandle) -> Uuid {
+        let mut tasks = self.tasks.lock();
+        loop {
+            let id = Uuid::new_v4();
+            if let Entry::Vacant(vacant) = tasks.entry(id) {
+                vacant.insert(item);
+                return id;
+            }
+        }
+    }
+
+    fn remove(&self, id: Uuid) -> Option<AbortHandle> {
+        self.tasks.lock().remove(&id)
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        for (_, handle) in self.tasks.lock().drain() {
+            handle.abort();
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct TaskGroup(Arc<Inner>);
 
 impl TaskGroup {
     pub fn spawn<Fut, T>(&self, future: Fut) -> TaskHandle<T>
@@ -35,21 +68,22 @@ impl TaskGroup {
         T: Send + 'static,
     {
         let (t, handle) = abortable(future);
-        self.0.push(handle);
-        let spawned_handle = tokio::spawn(t);
+        let id = self.0.insert(handle);
+        let spawned_handle = tokio::spawn({
+            let inner = Arc::downgrade(&self.0);
+            async move {
+                let res = t.await;
+                if let Some(inner) = inner.upgrade() {
+                    inner.remove(id);
+                }
+                res
+            }
+        });
         TaskHandle(Box::pin(async move {
             Ok(spawned_handle
                 .await
                 .map_err(|_| Shutdown::Runtime)?
                 .map_err(|_| Shutdown::TaskGroup)?)
         }))
-    }
-}
-
-impl Drop for TaskGroup {
-    fn drop(&mut self) {
-        while let Ok(handle) = self.0.pop() {
-            handle.abort();
-        }
     }
 }
