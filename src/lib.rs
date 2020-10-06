@@ -31,32 +31,40 @@ where
     }
 }
 
+#[derive(Debug)]
+enum Child {
+    Group(Arc<Inner>),
+    Task(AbortHandle),
+}
+
 #[derive(Default, Debug)]
 struct Inner {
-    tasks: Mutex<HashMap<Uuid, AbortHandle>>,
+    children: Mutex<HashMap<Uuid, Child>>,
 }
 
 impl Inner {
-    fn insert(&self, item: AbortHandle) -> Uuid {
-        let mut tasks = self.tasks.lock();
+    fn insert(&self, item: Child) -> Uuid {
+        let mut children = self.children.lock();
         loop {
             let id = Uuid::new_v4();
-            if let Entry::Vacant(vacant) = tasks.entry(id) {
+            if let Entry::Vacant(vacant) = children.entry(id) {
                 vacant.insert(item);
                 return id;
             }
         }
     }
 
-    fn remove(&self, id: Uuid) -> Option<AbortHandle> {
-        self.tasks.lock().remove(&id)
+    fn remove(&self, id: Uuid) -> Option<Child> {
+        self.children.lock().remove(&id)
     }
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        for (_, handle) in self.tasks.lock().drain() {
-            handle.abort();
+        for (_, child) in self.children.lock().drain() {
+            if let Child::Task(handle) = child {
+                handle.abort();
+            }
         }
     }
 }
@@ -73,7 +81,7 @@ impl TaskGroup {
         T: Send + 'static,
     {
         let (t, handle) = abortable(future);
-        let id = self.0.insert(handle);
+        let id = self.0.insert(Child::Task(handle));
         let spawned_handle = tokio::spawn({
             let inner = Arc::downgrade(&self.0);
             async move {
@@ -94,7 +102,7 @@ impl TaskGroup {
 
     /// Returns the number of tasks that are currently active in this task group.
     pub fn len(&self) -> usize {
-        self.0.tasks.lock().len()
+        self.0.children.lock().len()
     }
 
     /// Returns `true` if no tasks are active in this task group.
