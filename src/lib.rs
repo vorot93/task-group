@@ -45,14 +45,14 @@ struct InnerTask {
 #[derive(Debug)]
 struct Inner {
     tasks: Mutex<HashMap<Uuid, InnerTask>>,
-    metrics: Box<dyn Metrics>,
+    metrics: Arc<dyn Metrics>,
 }
 
 impl Default for Inner {
     fn default() -> Self {
         Self {
             tasks: Default::default(),
-            metrics: Box::new(DummyMetrics),
+            metrics: Arc::new(DummyMetrics),
         }
     }
 }
@@ -111,7 +111,7 @@ impl TaskGroup {
         Self {
             inner: Arc::new(Inner {
                 tasks: Default::default(),
-                metrics: Box::new(metrics),
+                metrics: Arc::new(metrics),
             }),
         }
     }
@@ -149,5 +149,12 @@ impl TaskGroup {
                 .map_err(|_| Shutdown::Runtime)?
                 .map_err(|_| Shutdown::TaskGroup)?)
         }))
+    }
+
+    /// Create a new task group that will be child to this one.
+    ///
+    /// Currently just inherits the metrics.
+    pub fn subgroup(&self) -> Self {
+        Self::new_with_metrics(self.inner.metrics.clone())
     }
 }
