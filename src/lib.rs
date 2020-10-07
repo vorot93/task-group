@@ -1,13 +1,18 @@
+pub use crate::metrics::Metrics;
+use crate::metrics::*;
 use futures::future::{abortable, AbortHandle};
 use parking_lot::Mutex;
 use std::{
     collections::{hash_map::Entry, HashMap},
+    fmt::Debug,
     future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 use uuid::Uuid;
+
+mod metrics;
 
 #[derive(Clone, Debug)]
 pub enum Shutdown {
@@ -31,51 +36,105 @@ where
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
+struct InnerTask {
+    abort_handle: AbortHandle,
+    name: String,
+}
+
+#[derive(Debug)]
 struct Inner {
-    tasks: Mutex<HashMap<Uuid, AbortHandle>>,
+    tasks: Mutex<HashMap<Uuid, InnerTask>>,
+    metrics: Box<dyn Metrics>,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            tasks: Default::default(),
+            metrics: Box::new(DummyMetrics),
+        }
+    }
 }
 
 impl Inner {
-    fn insert(&self, item: AbortHandle) -> Uuid {
+    fn insert(&self, item: InnerTask) -> Uuid {
         let mut tasks = self.tasks.lock();
         loop {
             let id = Uuid::new_v4();
             if let Entry::Vacant(vacant) = tasks.entry(id) {
+                let name = item.name.clone();
                 vacant.insert(item);
+                self.metrics.task_started(id, name);
                 return id;
             }
         }
     }
 
-    fn remove(&self, id: Uuid) -> Option<AbortHandle> {
-        self.tasks.lock().remove(&id)
+    fn remove(&self, id: Uuid) {
+        let mut tasks = self.tasks.lock();
+        if let Some(handle) = tasks.remove(&id) {
+            self.metrics.task_stopped(id, handle.name);
+        }
     }
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        for (_, handle) in self.tasks.lock().drain() {
-            handle.abort();
+        for (id, child) in self.tasks.lock().drain() {
+            child.abort_handle.abort();
+            self.metrics.task_stopped(id, child.name);
         }
     }
 }
 
 /// This is a holding structure that "owns" tasks. That is, when this struct is dropped, tasks are cancelled and eventually dropped from the Tokio runtime.
-#[derive(Default, Debug)]
-pub struct TaskGroup(Arc<Inner>);
+#[derive(Debug)]
+pub struct TaskGroup {
+    inner: Arc<Inner>,
+}
+
+impl Default for TaskGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TaskGroup {
+    pub fn new() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
+
+    pub fn new_with_metrics<M: Metrics>(metrics: M) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                tasks: Default::default(),
+                metrics: Box::new(metrics),
+            }),
+        }
+    }
+
     /// Spawn task on this task group.
     pub fn spawn<Fut, T>(&self, future: Fut) -> TaskHandle<T>
     where
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let (t, handle) = abortable(future);
-        let id = self.0.insert(handle);
+        self.spawn_with_name(future, "(unnamed)".into())
+    }
+
+    /// Spawn task on this task group.
+    pub fn spawn_with_name<Fut, T>(&self, future: Fut, name: String) -> TaskHandle<T>
+    where
+        Fut: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let (t, abort_handle) = abortable(future);
+        let id = self.inner.insert(InnerTask { abort_handle, name });
         let spawned_handle = tokio::spawn({
-            let inner = Arc::downgrade(&self.0);
+            let inner = Arc::downgrade(&self.inner);
             async move {
                 let res = t.await;
                 if let Some(inner) = inner.upgrade() {
@@ -90,15 +149,5 @@ impl TaskGroup {
                 .map_err(|_| Shutdown::Runtime)?
                 .map_err(|_| Shutdown::TaskGroup)?)
         }))
-    }
-
-    /// Returns the number of tasks that are currently active in this task group.
-    pub fn len(&self) -> usize {
-        self.0.tasks.lock().len()
-    }
-
-    /// Returns `true` if no tasks are active in this task group.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
