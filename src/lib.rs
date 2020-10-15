@@ -25,12 +25,17 @@ pub enum Shutdown {
 /// This can be awaited on to get task output.
 pub struct TaskHandle<T> {
     id: Uuid,
+    name: String,
     inner: Pin<Box<dyn Future<Output = Result<T, Shutdown>> + Send + 'static>>,
 }
 
 impl<T> TaskHandle<T> {
     pub fn id(&self) -> Uuid {
         self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -142,7 +147,10 @@ impl TaskGroup {
         T: Send + 'static,
     {
         let (t, abort_handle) = abortable(future);
-        let id = self.inner.insert(InnerTask { abort_handle, name });
+        let id = self.inner.insert(InnerTask {
+            abort_handle,
+            name: name.clone(),
+        });
         let spawned_handle = tokio::spawn({
             let inner = Arc::downgrade(&self.inner);
             async move {
@@ -155,6 +163,7 @@ impl TaskGroup {
         });
         TaskHandle {
             id,
+            name,
             inner: Box::pin(async move {
                 Ok(spawned_handle
                     .await
