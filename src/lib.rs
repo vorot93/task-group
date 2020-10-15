@@ -4,7 +4,7 @@ use futures::future::{abortable, AbortHandle};
 use parking_lot::Mutex;
 use std::{
     collections::{hash_map::Entry, HashMap},
-    fmt::Debug,
+    fmt::{Debug, Display},
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -137,15 +137,17 @@ impl TaskGroup {
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        self.spawn_with_name(future, "(unnamed)".into())
+        self.spawn_with_name("(unnamed)", future)
     }
 
     /// Spawn task on this task group.
-    pub fn spawn_with_name<Fut, T>(&self, future: Fut, name: String) -> TaskHandle<T>
+    pub fn spawn_with_name<N, Fut, T>(&self, name: N, future: Fut) -> TaskHandle<T>
     where
+        N: Display,
         Fut: Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
+        let name = name.to_string();
         let (t, abort_handle) = abortable(future);
         let id = self.inner.insert(InnerTask {
             abort_handle,
