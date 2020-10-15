@@ -173,6 +173,11 @@ impl TaskGroup {
         }
     }
 
+    /// Abort an existing task.
+    pub fn abort(&self, id: Uuid) {
+        self.inner.remove(id)
+    }
+
     /// Create a new task group that will be child to this one.
     ///
     /// Currently just inherits the metrics.
