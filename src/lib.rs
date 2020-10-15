@@ -23,7 +23,16 @@ pub enum Shutdown {
 }
 
 /// This can be awaited on to get task output.
-pub struct TaskHandle<T>(Pin<Box<dyn Future<Output = Result<T, Shutdown>> + Send + 'static>>);
+pub struct TaskHandle<T> {
+    id: Uuid,
+    inner: Pin<Box<dyn Future<Output = Result<T, Shutdown>> + Send + 'static>>,
+}
+
+impl<T> TaskHandle<T> {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+}
 
 impl<T> Future for TaskHandle<T>
 where
@@ -32,7 +41,7 @@ where
     type Output = Result<T, Shutdown>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.0).poll(cx)
+        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
@@ -144,12 +153,15 @@ impl TaskGroup {
                 res
             }
         });
-        TaskHandle(Box::pin(async move {
-            Ok(spawned_handle
-                .await
-                .map_err(|_| Shutdown::Runtime)?
-                .map_err(|_| Shutdown::TaskGroup)?)
-        }))
+        TaskHandle {
+            id,
+            inner: Box::pin(async move {
+                Ok(spawned_handle
+                    .await
+                    .map_err(|_| Shutdown::Runtime)?
+                    .map_err(|_| Shutdown::TaskGroup)?)
+            }),
+        }
     }
 
     /// Create a new task group that will be child to this one.
