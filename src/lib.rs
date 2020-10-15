@@ -73,8 +73,9 @@ impl Inner {
 
     fn remove(&self, id: Uuid) {
         let mut tasks = self.tasks.lock();
-        if let Some(handle) = tasks.remove(&id) {
-            self.metrics.task_stopped(id, handle.name);
+        if let Some(task) = tasks.remove(&id) {
+            task.abort_handle.abort();
+            self.metrics.task_stopped(id, task.name);
         }
     }
 }
