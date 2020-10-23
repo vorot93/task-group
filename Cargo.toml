@@ -8,5 +8,5 @@ license = "Apache-2.0"
 [dependencies]
 futures = "0.3"
 parking_lot = "0.11"
+rand = "0.7"
 tokio = { version = "0.2", features = ["rt-core"] }
-uuid = { version = "0.8", features = ["v4"] }

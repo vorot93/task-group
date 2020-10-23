@@ -10,9 +10,10 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use uuid::Uuid;
 
 mod metrics;
+
+pub type TaskId = u128;
 
 #[derive(Clone, Debug)]
 pub enum Shutdown {
@@ -24,13 +25,13 @@ pub enum Shutdown {
 
 /// This can be awaited on to get task output.
 pub struct TaskHandle<T> {
-    id: Uuid,
+    id: TaskId,
     name: String,
     inner: Pin<Box<dyn Future<Output = Result<T, Shutdown>> + Send + 'static>>,
 }
 
 impl<T> TaskHandle<T> {
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> TaskId {
         self.id
     }
 
@@ -58,7 +59,7 @@ struct InnerTask {
 
 #[derive(Debug)]
 struct Inner {
-    tasks: Mutex<HashMap<Uuid, InnerTask>>,
+    tasks: Mutex<HashMap<TaskId, InnerTask>>,
     metrics: Arc<dyn Metrics>,
 }
 
@@ -72,10 +73,10 @@ impl Default for Inner {
 }
 
 impl Inner {
-    fn insert(&self, item: InnerTask) -> Uuid {
+    fn insert(&self, item: InnerTask) -> TaskId {
         let mut tasks = self.tasks.lock();
         loop {
-            let id = Uuid::new_v4();
+            let id = rand::random();
             if let Entry::Vacant(vacant) = tasks.entry(id) {
                 let name = item.name.clone();
                 vacant.insert(item);
@@ -85,7 +86,7 @@ impl Inner {
         }
     }
 
-    fn remove(&self, id: Uuid) {
+    fn remove(&self, id: TaskId) {
         let mut tasks = self.tasks.lock();
         if let Some(task) = tasks.remove(&id) {
             task.abort_handle.abort();
@@ -176,7 +177,7 @@ impl TaskGroup {
     }
 
     /// Abort an existing task.
-    pub fn abort(&self, id: Uuid) {
+    pub fn abort(&self, id: TaskId) {
         self.inner.remove(id)
     }
 
