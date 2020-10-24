@@ -156,13 +156,13 @@ impl TaskGroup {
         });
         let spawned_handle = tokio::spawn({
             let inner = Arc::downgrade(&self.inner);
-            async move {
+            Box::pin(async move {
                 let res = t.await;
                 if let Some(inner) = inner.upgrade() {
                     inner.remove(id);
                 }
                 res
-            }
+            })
         });
         TaskHandle {
             id,
