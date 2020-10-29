@@ -1,6 +1,6 @@
 pub use crate::metrics::Metrics;
 use crate::metrics::*;
-use futures::future::{abortable, AbortHandle};
+use futures_util::future::{abortable, AbortHandle};
 use parking_lot::Mutex;
 use std::{
     collections::{hash_map::Entry, HashMap},
